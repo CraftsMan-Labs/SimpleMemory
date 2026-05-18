@@ -60,3 +60,6 @@ uv.lock
 
 # Type checking cache
 .mypy_cache/
+
+*.pdf
+*.cursor
