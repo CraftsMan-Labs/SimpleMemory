@@ -1,0 +1,17 @@
+[project]
+name = "kmg-api"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "kmg-shared",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "python-multipart>=0.0.12",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/kmg_api"]
