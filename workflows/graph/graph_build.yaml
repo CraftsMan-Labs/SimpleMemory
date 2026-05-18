@@ -1,0 +1,160 @@
+id: graph-build
+version: 1.0.0
+
+metadata:
+  name: "Knowledge Graph Build"
+  description: "Extract entities and relations from chunks/wiki, deduplicate, persist, and embed graph nodes."
+
+entry_node: extract_entities
+
+nodes:
+  - id: extract_entities
+    name: "Extract Entities"
+    node_type:
+      llm_call:
+        model: azure/gpt-4.1-mini
+        temperature: 0.3
+        heal: true
+    config:
+      output_schema:
+        type: object
+        properties:
+          entities:
+            type: array
+            items:
+              type: object
+              properties:
+                canonical_name:
+                  type: string
+                node_type:
+                  type: string
+                description:
+                  type: string
+                aliases:
+                  type: array
+                  items:
+                    type: string
+                confidence:
+                  type: number
+                evidence_chunk_ids:
+                  type: array
+                  items:
+                    type: string
+                reason:
+                  type: string
+              required: [canonical_name, node_type, description, aliases, confidence, evidence_chunk_ids, reason]
+        required: [entities]
+        additionalProperties: false
+      user_input_prompt: |
+        You are a knowledge graph extraction assistant. From the provided source content, extract all named entities.
+
+        Requirements:
+        - canonical_name: the primary name for the entity (title case)
+        - node_type: one of "person", "organization", "concept", "technology", "location", "event", "process", "artifact"
+        - description: 1-2 sentence description of the entity
+        - aliases: alternative names or abbreviations
+        - confidence: 0.0-1.0 indicating extraction confidence
+        - evidence_chunk_ids: which chunks support this entity's existence
+
+        Workspace: {{ input.workspace_id }}
+        Source: {{ input.source_id }}
+        Chunk IDs: {{ input.chunk_ids }}
+        Wiki Page IDs: {{ input.wiki_page_ids }}
+
+  - id: extract_relations
+    name: "Extract Relations"
+    node_type:
+      llm_call:
+        model: azure/gpt-4.1-mini
+        temperature: 0.3
+        heal: true
+    config:
+      output_schema:
+        type: object
+        properties:
+          relations:
+            type: array
+            items:
+              type: object
+              properties:
+                subject_name:
+                  type: string
+                predicate:
+                  type: string
+                object_name:
+                  type: string
+                confidence:
+                  type: number
+                evidence_chunk_ids:
+                  type: array
+                  items:
+                    type: string
+                reason:
+                  type: string
+              required: [subject_name, predicate, object_name, confidence, evidence_chunk_ids, reason]
+        required: [relations]
+        additionalProperties: false
+      user_input_prompt: |
+        Given the following extracted entities, identify semantic relations between them based on the source content.
+
+        Entities:
+        {% for entity in nodes.extract_entities.output.entities %}
+        - {{ entity.canonical_name }} ({{ entity.node_type }}): {{ entity.description }}
+        {% endfor %}
+
+        Requirements:
+        - subject_name and object_name must match a canonical_name from the entity list
+        - predicate should be a clear verb phrase (e.g., "works_at", "is_part_of", "created_by", "depends_on", "related_to")
+        - confidence: 0.0-1.0 indicating how well-supported the relation is
+        - Only extract relations with clear evidence in the source material
+
+        Chunk IDs: {{ input.chunk_ids }}
+
+  - id: deduplicate_nodes
+    name: "Deduplicate Nodes"
+    node_type:
+      custom_worker:
+        handler: deduplicate_nodes
+        handler_file: handlers.py
+    config:
+      payload:
+        tenant_id: "{{ input.tenant_id }}"
+        workspace_id: "{{ input.workspace_id }}"
+        entities: "{{ nodes.extract_entities.output.entities }}"
+
+  - id: persist_graph
+    name: "Persist Graph"
+    node_type:
+      custom_worker:
+        handler: persist_graph
+        handler_file: handlers.py
+    config:
+      payload:
+        tenant_id: "{{ input.tenant_id }}"
+        workspace_id: "{{ input.workspace_id }}"
+        source_id: "{{ input.source_id }}"
+        node_proposals: "{{ nodes.deduplicate_nodes.output.node_proposals }}"
+        relations: "{{ nodes.extract_relations.output.relations }}"
+        wiki_page_ids: "{{ input.wiki_page_ids }}"
+
+  - id: embed_graph_nodes
+    name: "Embed Graph Nodes"
+    node_type:
+      custom_worker:
+        handler: embed_graph_nodes
+        handler_file: handlers.py
+    config:
+      payload:
+        tenant_id: "{{ input.tenant_id }}"
+        workspace_id: "{{ input.workspace_id }}"
+        node_ids: "{{ nodes.persist_graph.output.node_ids }}"
+
+edges:
+  - from: extract_entities
+    to: extract_relations
+  - from: extract_relations
+    to: deduplicate_nodes
+  - from: deduplicate_nodes
+    to: persist_graph
+  - from: persist_graph
+    to: embed_graph_nodes

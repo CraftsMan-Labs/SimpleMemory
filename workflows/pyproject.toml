@@ -1,0 +1,11 @@
+[project]
+name = "kmg-workflows"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "kmg-shared",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

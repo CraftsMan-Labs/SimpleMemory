@@ -1,0 +1,104 @@
+id: canvas-ai-organize
+version: 1.0.0
+
+metadata:
+  name: "Canvas AI Organize"
+  description: "Load canvas items, propose an intelligent layout with groupings, and apply changes."
+
+entry_node: load_canvas_items
+
+nodes:
+  - id: load_canvas_items
+    name: "Load Canvas Items"
+    node_type:
+      custom_worker:
+        handler: load_canvas_items
+        handler_file: handlers.py
+    config:
+      payload:
+        tenant_id: "{{ input.tenant_id }}"
+        workspace_id: "{{ input.workspace_id }}"
+        canvas_id: "{{ input.canvas_id }}"
+
+  - id: propose_layout
+    name: "Propose Layout"
+    node_type:
+      llm_call:
+        model: azure/gpt-4.1-mini
+        temperature: 0.5
+        heal: true
+    config:
+      output_schema:
+        type: object
+        properties:
+          groups:
+            type: array
+            items:
+              type: object
+              properties:
+                label:
+                  type: string
+                item_ids:
+                  type: array
+                  items:
+                    type: string
+                x:
+                  type: number
+                y:
+                  type: number
+              required: [label, item_ids, x, y]
+          suggested_edges:
+            type: array
+            items:
+              type: object
+              properties:
+                from_id:
+                  type: string
+                to_id:
+                  type: string
+                label:
+                  type: string
+              required: [from_id, to_id, label]
+          reason:
+            type: string
+        required: [groups, suggested_edges, reason]
+        additionalProperties: false
+      user_input_prompt: |
+        You are a knowledge organization assistant. Given the following canvas items, propose an intelligent layout.
+
+        Current Items:
+        {% for item in nodes.load_canvas_items.output.items %}
+        - ID: {{ item.id }}, Type: {{ item.item_type }}, Title: {{ item.title }}, Position: ({{ item.x }}, {{ item.y }})
+        {% endfor %}
+
+        Current Edges:
+        {% for edge in nodes.load_canvas_items.output.edges %}
+        - From: {{ edge.from_item_id }} -> To: {{ edge.to_item_id }} ({{ edge.label }})
+        {% endfor %}
+
+        Requirements:
+        - Group related items together with a descriptive label
+        - Position groups in a logical spatial arrangement (e.g., hierarchical, clustered by topic)
+        - Suggest new edges where semantic relationships exist but aren't explicitly connected
+        - Use x,y coordinates in the range 0-2000 for positioning groups
+        - Explain your reasoning for the layout choices
+
+  - id: apply_layout
+    name: "Apply Layout"
+    node_type:
+      custom_worker:
+        handler: apply_layout
+        handler_file: handlers.py
+    config:
+      payload:
+        tenant_id: "{{ input.tenant_id }}"
+        workspace_id: "{{ input.workspace_id }}"
+        canvas_id: "{{ input.canvas_id }}"
+        groups: "{{ nodes.propose_layout.output.groups }}"
+        suggested_edges: "{{ nodes.propose_layout.output.suggested_edges }}"
+
+edges:
+  - from: load_canvas_items
+    to: propose_layout
+  - from: propose_layout
+    to: apply_layout

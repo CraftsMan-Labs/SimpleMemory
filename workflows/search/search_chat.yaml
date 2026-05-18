@@ -1,0 +1,156 @@
+id: search-chat
+version: 1.0.0
+
+metadata:
+  name: "Search & Chat"
+  description: "Classify query intent, perform vector search, hydrate results, and synthesize an answer with citations."
+
+entry_node: classify_query
+
+nodes:
+  - id: classify_query
+    name: "Classify Query"
+    node_type:
+      llm_call:
+        model: azure/gpt-4.1-mini
+        temperature: 0.2
+        heal: true
+    config:
+      output_schema:
+        type: object
+        properties:
+          intent:
+            type: string
+            enum: ["factual", "exploratory", "navigational", "comparison"]
+          refined_query:
+            type: string
+          record_types:
+            type: array
+            items:
+              type: string
+          reason:
+            type: string
+        required: [intent, refined_query, record_types, reason]
+        additionalProperties: false
+      user_input_prompt: |
+        Classify the following search query and refine it for optimal retrieval.
+
+        Query: {{ input.query }}
+        Workspace: {{ input.workspace_id }}
+        Requested scope: {{ input.scope }}
+        Requested record types: {{ input.record_types }}
+
+        Requirements:
+        - intent: "factual" (specific answer), "exploratory" (broad overview), "navigational" (find a page/entity), "comparison" (compare items)
+        - refined_query: rewritten for better semantic search (expand abbreviations, add context)
+        - record_types: which record types to search (subset of: "chunk", "wiki_page", "graph_node")
+
+  - id: route_search
+    name: "Route Search"
+    node_type:
+      switch:
+        branches:
+          - condition: '$.nodes.classify_query.output.intent == "navigational"'
+            target: vector_search
+          - condition: '$.nodes.classify_query.output.intent == "factual"'
+            target: vector_search
+          - condition: '$.nodes.classify_query.output.intent == "exploratory"'
+            target: vector_search
+          - condition: '$.nodes.classify_query.output.intent == "comparison"'
+            target: vector_search
+        default: vector_search
+
+  - id: vector_search
+    name: "Vector Search"
+    node_type:
+      custom_worker:
+        handler: vector_search
+        handler_file: handlers.py
+    config:
+      payload:
+        tenant_id: "{{ input.tenant_id }}"
+        workspace_id: "{{ input.workspace_id }}"
+        refined_query: "{{ nodes.classify_query.output.refined_query }}"
+        record_types: "{{ nodes.classify_query.output.record_types }}"
+        limit: "{{ input.limit }}"
+        intent: "{{ nodes.classify_query.output.intent }}"
+
+  - id: hydrate_results
+    name: "Hydrate Results"
+    node_type:
+      custom_worker:
+        handler: hydrate_results
+        handler_file: handlers.py
+    config:
+      payload:
+        tenant_id: "{{ input.tenant_id }}"
+        workspace_id: "{{ input.workspace_id }}"
+        results: "{{ nodes.vector_search.output.results }}"
+
+  - id: synthesize_answer
+    name: "Synthesize Answer"
+    node_type:
+      llm_call:
+        model: azure/gpt-4.1-mini
+        temperature: 0.5
+        stream: true
+        heal: true
+    config:
+      output_schema:
+        type: object
+        properties:
+          answer:
+            type: string
+          citations:
+            type: array
+            items:
+              type: object
+              properties:
+                record_id:
+                  type: string
+                record_type:
+                  type: string
+                title:
+                  type: string
+                relevance_score:
+                  type: number
+              required: [record_id, record_type, title, relevance_score]
+          confidence:
+            type: number
+          follow_up_suggestions:
+            type: array
+            items:
+              type: string
+        required: [answer, citations, confidence, follow_up_suggestions]
+        additionalProperties: false
+      user_input_prompt: |
+        Given the following search results, synthesize a comprehensive answer to the user's query.
+
+        Original query: {{ input.query }}
+        Intent: {{ nodes.classify_query.output.intent }}
+
+        Search Results:
+        {% for result in nodes.hydrate_results.output.hydrated_results %}
+        ---
+        Record Type: {{ result.record_type }}
+        Title: {{ result.title }}
+        Content: {{ result.content }}
+        Score: {{ result.score }}
+        ---
+        {% endfor %}
+
+        Requirements:
+        - Provide a clear, well-structured answer based on the retrieved content
+        - Cite specific sources using their record_id
+        - Rate your confidence 0.0-1.0 based on how well the sources answer the query
+        - Suggest 2-3 follow-up questions the user might want to explore
+
+edges:
+  - from: classify_query
+    to: route_search
+  - from: route_search
+    to: vector_search
+  - from: vector_search
+    to: hydrate_results
+  - from: hydrate_results
+    to: synthesize_answer
