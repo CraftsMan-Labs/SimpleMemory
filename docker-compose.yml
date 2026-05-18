@@ -1,0 +1,102 @@
+services:
+  postgres:
+    image: postgres:16
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: kmg_dev
+      POSTGRES_USER: kmg
+      POSTGRES_PASSWORD: kmg_dev_pass
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kmg -d kmg_dev"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_storage:/qdrant/storage
+
+  minio:
+    image: minio/minio:latest
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      sleep 3;
+      mc alias set local http://minio:9000 minioadmin minioadmin;
+      mc mb local/kmg-sources --ignore-existing;
+      "
+
+  api:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      KMG_DATABASE_URL: postgresql+asyncpg://kmg:kmg_dev_pass@postgres:5432/kmg_dev
+      KMG_REDIS_URL: redis://redis:6379/0
+      KMG_QDRANT_URL: http://qdrant:6333
+      KMG_S3_ENDPOINT: http://minio:9000
+      KMG_S3_ACCESS_KEY: minioadmin
+      KMG_S3_SECRET_KEY: minioadmin
+      KMG_S3_BUCKET: kmg-sources
+      KMG_LOG_FORMAT: json
+    depends_on:
+      - postgres
+      - redis
+      - qdrant
+      - minio
+
+  worker:
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
+    environment:
+      KMG_DATABASE_URL: postgresql+asyncpg://kmg:kmg_dev_pass@postgres:5432/kmg_dev
+      KMG_REDIS_URL: redis://redis:6379/0
+      KMG_QDRANT_URL: http://qdrant:6333
+      KMG_S3_ENDPOINT: http://minio:9000
+      KMG_S3_ACCESS_KEY: minioadmin
+      KMG_S3_SECRET_KEY: minioadmin
+      KMG_S3_BUCKET: kmg-sources
+      KMG_LOG_FORMAT: json
+    depends_on:
+      - postgres
+      - redis
+      - qdrant
+      - minio
+
+volumes:
+  pgdata:
+  qdrant_storage:
+  minio_data:
