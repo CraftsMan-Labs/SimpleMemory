@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 
 from kmg_api.dependencies import TenantId, WorkspaceId, get_graph_service
 from kmg_api.schemas.graph import (
@@ -22,8 +22,12 @@ async def list_graph_nodes(
     tenant_id: TenantId,
     workspace_id: WorkspaceId,
     graph_service: Annotated[GraphService, Depends(get_graph_service)],
+    limit: Annotated[int, Query(ge=1, le=1000)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
 ) -> dict:
-    nodes, total = await graph_service.list_nodes(tenant_id, workspace_id)
+    nodes, total = await graph_service.list_nodes(
+        tenant_id, workspace_id, limit=limit, offset=offset
+    )
     return {"nodes": nodes, "total": total}
 
 
@@ -72,6 +76,15 @@ async def list_graph_edges(
     tenant_id: TenantId,
     workspace_id: WorkspaceId,
     graph_service: Annotated[GraphService, Depends(get_graph_service)],
+    limit: Annotated[int, Query(ge=1, le=2000)] = 500,
+    min_confidence: Annotated[float, Query(ge=0.0, le=1.0)] = 0.0,
+    predicate: Annotated[str | None, Query()] = None,
 ) -> dict:
-    edges = await graph_service.list_edges(tenant_id, workspace_id)
+    edges = await graph_service.list_edges(
+        tenant_id,
+        workspace_id,
+        limit=limit,
+        min_confidence=min_confidence,
+        predicate=predicate,
+    )
     return {"edges": edges, "total": len(edges)}

@@ -38,13 +38,23 @@ class GraphService:
         return node
 
     async def list_edges(
-        self, tenant_id: uuid.UUID, workspace_id: uuid.UUID
+        self,
+        tenant_id: uuid.UUID,
+        workspace_id: uuid.UUID,
+        *,
+        limit: int = 500,
+        min_confidence: float = 0.0,
+        predicate: str | None = None,
     ) -> list[GraphEdge]:
         stmt = select(GraphEdge).where(
             GraphEdge.tenant_id == tenant_id,
             GraphEdge.workspace_id == workspace_id,
             GraphEdge.status == "active",
+            GraphEdge.confidence >= min_confidence,
         )
+        if predicate:
+            stmt = stmt.where(GraphEdge.predicate == predicate)
+        stmt = stmt.limit(limit)
         result = await self._graph_repo._session.execute(stmt)
         return list(result.scalars().all())
 
