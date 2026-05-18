@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from kmg_shared.db.models.wiki import (
@@ -121,6 +121,39 @@ class WikiRepository(BaseRepository[WikiPage]):
 
     async def get_backlinks(self, wiki_page_id: uuid.UUID) -> list[WikiBacklink]:
         stmt = select(WikiBacklink).where(WikiBacklink.wiki_page_id == wiki_page_id)
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def get_evidence_for_page(self, wiki_page_id: uuid.UUID) -> list[WikiEvidence]:
+        stmt = (
+            select(WikiEvidence)
+            .where(WikiEvidence.wiki_page_id == wiki_page_id)
+            .order_by(WikiEvidence.confidence.desc())
+        )
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def search_pages(
+        self,
+        tenant_id: uuid.UUID,
+        workspace_id: uuid.UUID,
+        query: str,
+        *,
+        limit: int = 50,
+    ) -> list[WikiPage]:
+        pattern = f"%{query.lower()}%"
+        stmt = (
+            select(WikiPage)
+            .where(
+                WikiPage.tenant_id == tenant_id,
+                WikiPage.workspace_id == workspace_id,
+                or_(
+                    WikiPage.title.ilike(pattern),
+                    WikiPage.slug.ilike(pattern),
+                ),
+            )
+            .limit(limit)
+        )
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
 

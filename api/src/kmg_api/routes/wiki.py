@@ -3,12 +3,13 @@ from __future__ import annotations
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 
 from kmg_api.dependencies import TenantId, WorkspaceId, get_wiki_service
 from kmg_api.schemas.wiki import (
     UpdateWikiPageRequest,
     WikiBacklinkResponse,
+    WikiEvidenceResponse,
     WikiPageListResponse,
     WikiPageResponse,
     WikiRevisionResponse,
@@ -23,8 +24,13 @@ async def list_wiki_pages(
     tenant_id: TenantId,
     workspace_id: WorkspaceId,
     wiki_service: Annotated[WikiService, Depends(get_wiki_service)],
+    q: Annotated[str | None, Query(description="Title/slug substring filter")] = None,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
 ) -> dict:
-    pages, total = await wiki_service.list_pages(tenant_id, workspace_id)
+    pages, total = await wiki_service.list_pages(
+        tenant_id, workspace_id, limit=limit, offset=offset, q=q
+    )
     return {"pages": pages, "total": total}
 
 
@@ -75,3 +81,12 @@ async def get_wiki_revisions(
     wiki_service: Annotated[WikiService, Depends(get_wiki_service)],
 ) -> list:
     return await wiki_service.get_revisions(tenant_id, page_id)
+
+
+@router.get("/pages/{page_id}/evidence", response_model=list[WikiEvidenceResponse])
+async def get_wiki_evidence(
+    page_id: uuid.UUID,
+    tenant_id: TenantId,
+    wiki_service: Annotated[WikiService, Depends(get_wiki_service)],
+) -> list:
+    return await wiki_service.get_evidence(tenant_id, page_id)

@@ -69,3 +69,16 @@ class WikiRevisionResponse(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class WikiEvidenceResponse(BaseModel):
+    id: uuid.UUID
+    wiki_page_id: uuid.UUID
+    chunk_id: uuid.UUID
+    source_id: uuid.UUID
+    source_version_id: uuid.UUID
+    evidence_role: str
+    confidence: float
+    quote: str | None
+
+    model_config = {"from_attributes": True}

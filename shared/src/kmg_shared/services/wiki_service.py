@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import uuid
 
-from kmg_shared.db.models.wiki import WikiBacklink, WikiPage, WikiRevision
+from kmg_shared.db.models.wiki import (
+    WikiBacklink,
+    WikiEvidence,
+    WikiPage,
+    WikiRevision,
+)
 from kmg_shared.errors import NotFoundError
 from kmg_shared.repositories.wiki_repo import WikiRepository
 
@@ -34,7 +39,13 @@ class WikiService:
         *,
         limit: int = 50,
         offset: int = 0,
+        q: str | None = None,
     ) -> tuple[list[WikiPage], int]:
+        if q:
+            pages = await self._wiki_repo.search_pages(
+                tenant_id, workspace_id, q, limit=limit
+            )
+            return pages, len(pages)
         pages = await self._wiki_repo.list_by_workspace(
             tenant_id, workspace_id, limit=limit, offset=offset
         )
@@ -42,6 +53,12 @@ class WikiService:
             tenant_id, workspace_id
         )
         return pages, total
+
+    async def get_evidence(
+        self, tenant_id: uuid.UUID, page_id: uuid.UUID
+    ) -> list[WikiEvidence]:
+        await self.get_page(tenant_id, page_id)
+        return await self._wiki_repo.get_evidence_for_page(page_id)
 
     async def update_page(
         self,
